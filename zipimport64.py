@@ -446,6 +446,11 @@ def _read_directory(archive):
                 raise EOFError('EOF read where not expected')
             # Start of file header
             if buffer[:4] != b'PK\x01\x02':
+                if count != num_entries:
+                    raise ZipImportError(
+                        f"mismatched num_entries: {count} should be {num_entries} in {archive!r}",
+                        path=archive,
+                    )
                 break                                # Bad: Central Dir File Header
             if len(buffer) != 46:
                 raise EOFError('EOF read where not expected')
