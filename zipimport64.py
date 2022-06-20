@@ -39,7 +39,11 @@ _zip_directory_cache = {}
 _module_type = type(sys)
 
 END_CENTRAL_DIR_SIZE = 22
-STRING_END_ARCHIVE = b'PK\x05\x06'
+END_CENTRAL_DIR_SIZE_64 = 56
+END_CENTRAL_DIR_LOCATOR_SIZE_64 = 20
+STRING_END_ARCHIVE = b'PK\x05\x06'  # standard EOCD signature
+STRING_END_LOCATOR_64 = b'PK\x06\x07'  # Zip64 EOCD Locator signature
+STRING_END_ZIP_64 = b'PK\x06\x06'  # Zip64 EOCD signature
 MAX_COMMENT_LEN = (1 << 16) - 1
 MAX_UINT32 = 0xffffffff
 ZIP64_EXTRA_TAG = 0x1
@@ -366,7 +370,8 @@ def _read_directory(archive):
             raise ZipImportError(f"can't read Zip file: {archive!r}",
                                  path=archive)
         max_comment_start = max(file_size - MAX_COMMENT_LEN -
-                                END_CENTRAL_DIR_SIZE, 0)
+								END_CENTRAL_DIR_SIZE - END_CENTRAL_DIR_SIZE_64 -
+								END_CENTRAL_DIR_LOCATOR_SIZE_64, 0)
         try:
             fp.seek(max_comment_start)
             data = fp.read()
@@ -374,21 +379,48 @@ def _read_directory(archive):
             raise ZipImportError(f"can't read Zip file: {archive!r}",
                                  path=archive)
         pos = data.rfind(STRING_END_ARCHIVE)
-        if pos < 0:
+        pos64 = data.rfind(STRING_END_ZIP_64)
+        pos64l = data.rfind(STRING_END_LOCATOR_64)
+        if pos64l >= 0 and pos64 < 0:
+            # This should not happen; the spec says these are together
+            raise ZipImportError(f'zip64 file with faraway EOCD: {archive!r}',
+                                 path=archive)
+        
+        if pos64 >= 0:
+            # Zip64 (although standard EOCD is probably present too)
+            buffer = data[pos64:pos64 + END_CENTRAL_DIR_SIZE_64]
+            if len(buffer) != END_CENTRAL_DIR_SIZE_64:
+                raise ZipImportError(f"corrupt Zip64 file: {archive!r}",
+                                     path=archive)
+            header_position = file_size - len(data) + pos64
+
+            central_directory_size = int.from_bytes(buffer[40:48], 'little')
+            central_directory_position = int.from_bytes(buffer[48:56], 'little')
+            num_entries = int.from_bytes(buffer[24:32], 'little')
+        elif pos >= 0:
+            buffer = data[pos:pos+END_CENTRAL_DIR_SIZE]
+            if len(buffer) != END_CENTRAL_DIR_SIZE:
+                raise ZipImportError(f"corrupt Zip file: {archive!r}",
+                                     path=archive)
+
+            header_position = file_size - len(data) + pos
+
+            # Buffer now contains a valid EOCD, and header_position gives the
+            # starting position of it.
+            central_directory_size = _unpack_uint32(buffer[12:16])
+            central_directory_position = _unpack_uint32(buffer[16:20])
+            num_entries = _unpack_uint16(buffer[8:10])
+
+            # N.b. if someday you want to prefer the standard (non-zip64) EOCD,
+            # you need to adjust position by 76 for arc to be 0.
+        else:
             raise ZipImportError(f'not a Zip file: {archive!r}',
                                  path=archive)
-        buffer = data[pos:pos+END_CENTRAL_DIR_SIZE]
-        if len(buffer) != END_CENTRAL_DIR_SIZE:
-            raise ZipImportError(f"corrupt Zip file: {archive!r}",
-                                 path=archive)
-        header_position = file_size - len(data) + pos
 
         # Buffer now contains a valid EOCD, and header_position gives the
         # starting position of it.
         # XXX: These are cursory checks but are not as exact or strict as they
         # could be.  Checking the arc-adjusted value is probably good too.
-        central_directory_size = _unpack_uint32(buffer[12:16])
-        central_directory_position = _unpack_uint32(buffer[16:20])
         if header_position < central_directory_size:
             raise ZipImportError(f'bad central directory size: {archive!r}', path=archive)
         if header_position < central_directory_position:
