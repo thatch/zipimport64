@@ -4,6 +4,8 @@ import os
 import shutil
 import zipfile
 
+import zipfile_zstd
+
 SMALL = b"x = 1\n"
 ZEROES = b"\x00" * 10_000
 
@@ -27,6 +29,9 @@ if __name__ == "__main__":
     for base, compression in [
         ("store", {}),
         ("deflate", {"compression": zipfile.ZIP_DEFLATED}),
+        ("bzip2", {"compression": zipfile.ZIP_BZIP2}),
+        ("lzma", {"compression": zipfile.ZIP_LZMA}),
+        ("zstd", {"compression": zipfile.ZIP_ZSTANDARD, "compresslevel": 19}),
     ]:
         # standard
 
@@ -34,45 +39,46 @@ if __name__ == "__main__":
             zf.writestr("small.py", SMALL)
             zf.writestr("zeroes.bin", ZEROES)
 
-        shutil.copy(f"small_{base}.zip", f"small_{base}_comment.zip")
-        with ReproducibleZipFile(f"small_{base}_comment.zip", "a") as zf:
-            zf.comment = b" " * 65535
+        if base in ("store", "deflate"):
+            shutil.copy(f"small_{base}.zip", f"small_{base}_comment.zip")
+            with ReproducibleZipFile(f"small_{base}_comment.zip", "a") as zf:
+                zf.comment = b" " * 65535
 
-        with open(f"small_{base}_corrupt.zip", "wb") as f:
-            # Replacing each central directory entry header with nonsense
-            with open(f"small_{base}.zip", "rb") as f2:
-                f.write(f2.read().replace(b"\x50\x4b\x01\x02", b"ZZZZ"))
+            with open(f"small_{base}_corrupt.zip", "wb") as f:
+                # Replacing each central directory entry header with nonsense
+                with open(f"small_{base}.zip", "rb") as f2:
+                    f.write(f2.read().replace(b"\x50\x4b\x01\x02", b"ZZZZ"))
 
-        with open(f"par_{base}.zip", "wb") as f:
-            f.write(b"# Some prepended data\n")
+            with open(f"par_{base}.zip", "wb") as f:
+                f.write(b"# Some prepended data\n")
 
-            # zip -A fails unless there's a lot more data
-            f.write(b"\x00" * 100)
+                # zip -A fails unless there's a lot more data
+                f.write(b"\x00" * 100)
 
-            with open(f"small_{base}.zip", "rb") as f2:
-                f.write(f2.read())
+                with open(f"small_{base}.zip", "rb") as f2:
+                    f.write(f2.read())
 
-        shutil.copy(f"par_{base}.zip", f"par_{base}_fixup.zip")
-        os.system(f"zip -A par_{base}_fixup.zip")
+            shutil.copy(f"par_{base}.zip", f"par_{base}_fixup.zip")
+            os.system(f"zip -A par_{base}_fixup.zip")
 
-        # zip64
+            # zip64
 
-        with ReproducibleZipFile(f"small_{base}_64.zip", "w", **compression) as zf:
-            zf.writestr("small.py", SMALL)
-            zf.writestr("zeroes.bin", ZEROES)
+            with ReproducibleZipFile(f"small_{base}_64.zip", "w", **compression) as zf:
+                zf.writestr("small.py", SMALL)
+                zf.writestr("zeroes.bin", ZEROES)
 
-            # XXX I wish there was an easier way to force zip64
-            for i in range(65536):
-                zf.writestr(f"{i}.bin", str(i))
+                # XXX I wish there was an easier way to force zip64
+                for i in range(65536):
+                    zf.writestr(f"{i}.bin", str(i))
 
-        with open(f"par_{base}_64.zip", "wb") as f:
-            f.write(b"# Some prepended data\n")
+            with open(f"par_{base}_64.zip", "wb") as f:
+                f.write(b"# Some prepended data\n")
 
-            # zip -A fails unless there's a lot more data
-            f.write(b"\x00" * 100)
+                # zip -A fails unless there's a lot more data
+                f.write(b"\x00" * 100)
 
-            with open(f"small_{base}_64.zip", "rb") as f2:
-                f.write(f2.read())
+                with open(f"small_{base}_64.zip", "rb") as f2:
+                    f.write(f2.read())
 
         if base == "deflate":
             with ReproducibleZipFile(f"large_{base}_64.zip", "w", **compression) as zf:

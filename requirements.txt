@@ -1,2 +1,3 @@
 coverage==6.4.1
 ufmt==1.3.3
+zipfile-zstd==0.0.4
