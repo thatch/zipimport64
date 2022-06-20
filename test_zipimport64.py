@@ -30,6 +30,7 @@ def load_zipimporter(filename):
 
 TEST_OFFSET = 122  # amount of prepended data for par_*.zip
 EXPECTED_SMALL = b"x = 1\n"
+EXPECTED_ZEROES = b"\x00" * 10000
 
 
 class Zipimport64Test(unittest.TestCase):
