@@ -597,29 +597,82 @@ cp437_table = (
     '\xb0\u2219\xb7\u221a\u207f\xb2\u25a0\xa0'
 )
 
+# Not just zlib, but name kept for historical reasons
 _importing_zlib = False
 
-# Return the zlib.decompress function object, or NULL if zlib couldn't
-# be imported. The function is cached when found, so subsequent calls
-# don't import zlib again.
-def _get_decompress_func():
+KNOWN_COMPRESSION = {
+    0: "store",
+    8: "zlib",
+    12: "bzip2",
+    14: "lzma",
+    93: "zstandard",
+}
+
+# Return an appropriate decompress function based on the provided compression number, or
+# raise an exception if that can't be loaded.
+def _get_decompress_func(compress):
+    compress_type = KNOWN_COMPRESSION.get(compress)
+    func = globals().get(f"_get_decompress_func_{compress_type}")
+    if func is None:
+        _bootstrap._verbose_message(f"zipimport: unknown compression type {compress}")
+        raise ZipImportError(f"zipimport: unknown compression type {compress}")
+
     global _importing_zlib
     if _importing_zlib:
-        # Someone has a zlib.py[co] in their Zip file
+        # Someone has a file like zlib.py[co] in their Zip file
         # let's avoid a stack overflow.
-        _bootstrap._verbose_message('zipimport: zlib UNAVAILABLE')
-        raise ZipImportError("can't decompress data; zlib not available")
+        _bootstrap._verbose_message(f'zipimport: {compress_type} UNAVAILABLE due to shadowing')
+        raise ZipImportError(f"can't decompress data; {compress_type} not available due to shadowing")
 
-    _importing_zlib = True
     try:
-        from zlib import decompress
+        decompress = func()
     except Exception:
-        _bootstrap._verbose_message('zipimport: zlib UNAVAILABLE')
-        raise ZipImportError("can't decompress data; zlib not available")
+        _bootstrap._verbose_message(f'zipimport: {compress_type} UNAVAILABLE')
+        raise ZipImportError(f"can't decompress data; {compress_type} not available")
     finally:
         _importing_zlib = False
 
-    _bootstrap._verbose_message('zipimport: zlib available')
+    _bootstrap._verbose_message(f'zipimport: {compress_type} available')
+    return decompress
+
+def _get_decompress_func_store():
+    def decompress_func(raw_data, file_size):
+        return raw_data
+    return decompress_func
+
+def _get_decompress_func_zlib():
+    from zlib import decompress
+    def decompress_func(raw_data, file_size):
+        return decompress(raw_data, -15)
+    return decompress_func
+
+def _get_decompress_func_bzip2():
+    from bz2 import decompress
+    def decompress_func(raw_data, file_size):
+        return decompress(raw_data)
+    return decompress_func
+
+def _get_decompress_func_lzma():
+    # This is translated from the implementation in zipfile.py
+    from lzma import LZMADecompressor, FORMAT_RAW, FILTER_LZMA1, _decode_filter_properties
+    def decompress(raw_data, file_size):
+        psize = _unpack_uint16(raw_data[2:4])
+        obj = LZMADecompressor(
+            FORMAT_RAW,
+            filters = [
+                _decode_filter_properties(
+                    FILTER_LZMA1,
+                    raw_data[4:4+psize],
+                ),
+            ],
+        )
+        return obj.decompress(raw_data[4+psize:])
+    return decompress
+
+def _get_decompress_func_zstandard():
+    from zstandard import ZstdDecompressor
+    def decompress(raw_data, file_size):
+        return ZstdDecompressor().decompress(raw_data, file_size)
     return decompress
 
 # Given a path to a Zip file and a toc_entry, return the (uncompressed) data.
@@ -654,16 +707,8 @@ def _get_data(archive, toc_entry):
         if len(raw_data) != data_size:
             raise OSError("zipimport: can't read data")
 
-    if compress == 0:
-        # data is not compressed
-        return raw_data
-
-    # Decompress with zlib
-    try:
-        decompress = _get_decompress_func()
-    except Exception:
-        raise ZipImportError("can't decompress data; zlib not available")
-    return decompress(raw_data, -15)
+    decompress = _get_decompress_func(compress)
+    return decompress(raw_data, file_size)
 
 
 # Lenient date/time comparison function. The precision of the mtime
