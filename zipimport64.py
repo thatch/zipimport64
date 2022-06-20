@@ -385,14 +385,19 @@ def _read_directory(archive):
 
         # Buffer now contains a valid EOCD, and header_position gives the
         # starting position of it.
-        header_size = _unpack_uint32(buffer[12:16])
-        header_offset = _unpack_uint32(buffer[16:20])
-        if header_position < header_size:
+        # XXX: These are cursory checks but are not as exact or strict as they
+        # could be.  Checking the arc-adjusted value is probably good too.
+        central_directory_size = _unpack_uint32(buffer[12:16])
+        central_directory_position = _unpack_uint32(buffer[16:20])
+        if header_position < central_directory_size:
             raise ZipImportError(f'bad central directory size: {archive!r}', path=archive)
-        if header_position < header_offset:
+        if header_position < central_directory_position:
             raise ZipImportError(f'bad central directory offset: {archive!r}', path=archive)
-        header_position -= header_size
-        arc_offset = header_position - header_offset
+        header_position -= central_directory_size
+        # On just-a-zipfile these values are the same and arc_offset is zero; if
+        # the file has some bytes prepended, `arc_offset` is the number of such
+        # bytes.  This is used for pex as well as self-extracting .exe.
+        arc_offset = header_position - central_directory_position
         if arc_offset < 0:
             raise ZipImportError(f'bad central directory size or offset: {archive!r}', path=archive)
 
@@ -510,7 +515,7 @@ def _read_directory(archive):
             # as encoded in the entry, not adjusted for this file.
             # N.b. this must be after we've potentially read the zip64 extra which can
             # change `file_offset`.
-            if file_offset > header_offset:
+            if file_offset > central_directory_position:
                 raise ZipImportError(f'bad local header offset: {archive!r}', path=archive)
             file_offset += arc_offset
 
