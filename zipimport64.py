@@ -41,6 +41,8 @@ _module_type = type(sys)
 END_CENTRAL_DIR_SIZE = 22
 STRING_END_ARCHIVE = b'PK\x05\x06'
 MAX_COMMENT_LEN = (1 << 16) - 1
+MAX_UINT32 = 0xffffffff
+ZIP64_EXTRA_TAG = 0x1
 
 class zipimporter:
     """zipimporter(archivepath) -> zipimporter object
@@ -422,9 +424,6 @@ def _read_directory(archive):
             comment_size = _unpack_uint16(buffer[32:34])
             file_offset = _unpack_uint32(buffer[42:46])
             header_size = name_size + extra_size + comment_size
-            if file_offset > header_offset:
-                raise ZipImportError(f'bad local header offset: {archive!r}', path=archive)
-            file_offset += arc_offset
 
             try:
                 name = fp.read(name_size)
@@ -436,7 +435,10 @@ def _read_directory(archive):
             # slower than reading the data because fseek flushes stdio's
             # internal buffers.    See issue #8745.
             try:
-                if len(fp.read(header_size - name_size)) != header_size - name_size:
+                extra_data_len = header_size - name_size
+                extra_data = fp.read(extra_data_len)
+
+                if len(extra_data) != extra_data_len:
                     raise ZipImportError(f"can't read Zip file: {archive!r}", path=archive)
             except OSError:
                 raise ZipImportError(f"can't read Zip file: {archive!r}", path=archive)
@@ -453,6 +455,65 @@ def _read_directory(archive):
 
             name = name.replace('/', path_sep)
             path = _bootstrap_external._path_join(archive, name)
+
+            # Ordering matches unpacking below.
+            if (
+                file_size == MAX_UINT32 or
+                data_size == MAX_UINT32 or
+                file_offset == MAX_UINT32
+            ):
+                # need to decode extra_data looking for a zip64 extra (which might not
+                # be present)
+                while extra_data:
+                    if len(extra_data) < 4:
+                        raise ZipImportError(f"can't read header extra: {archive!r}", path=archive)
+                    tag = _unpack_uint16(extra_data[:2])
+                    size = _unpack_uint16(extra_data[2:4])
+                    if len(extra_data) < 4 + size:
+                        raise ZipImportError(f"can't read header extra: {archive!r}", path=archive)
+                    if tag == ZIP64_EXTRA_TAG:
+                        if (len(extra_data) - 4) % 8 != 0:
+                            raise ZipImportError(f"can't read header extra: {archive!r}", path=archive)
+                        values = [
+                            int.from_bytes(extra_data[i:i+8], 'little')
+                            for i in range(4, len(extra_data), 8)
+                        ]
+
+                        # N.b. Here be dragons: the ordering of these is different than
+                        # the header fields, and it's really easy to get it wrong since
+                        # naturally-occuring zips that use all 3 are >4GB and not
+                        # something that would be checked-in.
+                        # The tests include a binary-edited zip that uses zip64
+                        # (unnecessarily) for all three.
+                        if file_size == MAX_UINT32:
+                            file_size = values.pop(0)
+                        if data_size == MAX_UINT32:
+                            data_size = values.pop(0)
+                        if file_offset == MAX_UINT32:
+                            file_offset = values.pop(0)
+
+                        if values: 
+                            raise ZipImportError(f"can't read header extra: {archive!r}", path=archive)
+
+                        break
+                    
+                    # For a typical zip, this bytes-slicing only happens 2-3 times, on
+                    # small data like timestamps and filesizes.
+                    extra_data = extra_data[4+size:]
+                else:
+                    _bootstrap._verbose_message(
+                        "zipimport: suspected zip64 but no zip64 extra for {!r}",
+                        path,
+                    )
+            # XXX These two statements seem swapped because `header_offset` is a
+            # position within the actual file, but `file_offset` (when compared) is
+            # as encoded in the entry, not adjusted for this file.
+            # N.b. this must be after we've potentially read the zip64 extra which can
+            # change `file_offset`.
+            if file_offset > header_offset:
+                raise ZipImportError(f'bad local header offset: {archive!r}', path=archive)
+            file_offset += arc_offset
+
             t = (path, compress, data_size, file_size, file_offset, time, date, crc)
             files[name] = t
             count += 1
