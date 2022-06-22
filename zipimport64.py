@@ -370,8 +370,8 @@ def _read_directory(archive):
             raise ZipImportError(f"can't read Zip file: {archive!r}",
                                  path=archive)
         max_comment_start = max(file_size - MAX_COMMENT_LEN -
-								END_CENTRAL_DIR_SIZE - END_CENTRAL_DIR_SIZE_64 -
-								END_CENTRAL_DIR_LOCATOR_SIZE_64, 0)
+                                END_CENTRAL_DIR_SIZE - END_CENTRAL_DIR_SIZE_64 -
+                                END_CENTRAL_DIR_LOCATOR_SIZE_64, 0)
         try:
             fp.seek(max_comment_start)
             data = fp.read()
@@ -380,12 +380,7 @@ def _read_directory(archive):
                                  path=archive)
         pos = data.rfind(STRING_END_ARCHIVE)
         pos64 = data.rfind(STRING_END_ZIP_64)
-        pos64l = data.rfind(STRING_END_LOCATOR_64)
-        if pos64l >= 0 and pos64 < 0:
-            # This should not happen; the spec says these are together
-            raise ZipImportError(f'zip64 file with faraway EOCD: {archive!r}',
-                                 path=archive)
-        
+
         if (pos64 >= 0 and pos64+END_CENTRAL_DIR_SIZE_64+END_CENTRAL_DIR_LOCATOR_SIZE_64==pos):
             # Zip64 at "correct" offset from standard EOCD
             buffer = data[pos64:pos64 + END_CENTRAL_DIR_SIZE_64]
@@ -534,11 +529,11 @@ def _read_directory(archive):
                         if file_offset == MAX_UINT32:
                             file_offset = values.pop(0)
 
-                        if values: 
+                        if values:
                             raise ZipImportError(f"can't read header extra: {archive!r}", path=archive)
 
                         break
-                    
+
                     # For a typical zip, this bytes-slicing only happens 2-3 times, on
                     # small data like timestamps and filesizes.
                     extra_data = extra_data[4+size:]
