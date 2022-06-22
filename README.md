@@ -52,11 +52,11 @@ are considered "compliant."
 
 ## zip64 EOCD Locator
 
-In the name of simplicity, the new implementation also ignores the locator block, which
+In the name of simplicity, the new implementation also ignores the data in the locator block, which
 is mainly (in single-disk archives) for allowing arbitrary data between the Zip64 EOCD
-and the start of the classic EOCD.  I am not aware of any examples of such data, and
-this still kind of supports them (as long as the comment + extensible data is not
->16KB).
+and the start of the classic EOCD (but zipfile and info-zip both reject such files).  I
+am not aware of any examples of such data, and this still kind of supports them (as long
+as the comment + extensible data is not >64KB).
 
 If you have example files for this, please point me at them (and the tool that created
 them) and I'll add support.
