@@ -386,8 +386,8 @@ def _read_directory(archive):
             raise ZipImportError(f'zip64 file with faraway EOCD: {archive!r}',
                                  path=archive)
         
-        if pos64 >= 0:
-            # Zip64 (although standard EOCD is probably present too)
+        if (pos64 >= 0 and pos64+END_CENTRAL_DIR_SIZE_64+END_CENTRAL_DIR_LOCATOR_SIZE_64==pos):
+            # Zip64 at "correct" offset from standard EOCD
             buffer = data[pos64:pos64 + END_CENTRAL_DIR_SIZE_64]
             if len(buffer) != END_CENTRAL_DIR_SIZE_64:
                 raise ZipImportError(f"corrupt Zip64 file: {archive!r}",

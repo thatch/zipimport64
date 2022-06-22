@@ -30,11 +30,16 @@ def load_zipimporter(filename):
 
 TEST_OFFSET = 122  # amount of prepended data for par_*.zip
 EXPECTED_SMALL = b"x = 1\n"
+EXPECTED_OUTER = b"outer = 1\n"
 
 
 class Zipimport64Test(unittest.TestCase):
 
     # method=ZIP_STORED
+
+    def test_empty(self):
+        e = load_entries("testdata/empty_store.zip")
+        self.assertEqual(0, len(e))
 
     def test_small_directory_and_contents(self):
         e, zi = load_zipimporter("testdata/small_store.zip")
@@ -74,6 +79,13 @@ class Zipimport64Test(unittest.TestCase):
             "^mismatched num_entries: 0 should be 2 in 'testdata/small_store_corrupt\.zip'$",
         ):
             load_entries("testdata/small_store_corrupt.zip")
+
+    def test_small_corrupt_exception(self):
+        with self.assertRaisesRegex(
+            ZipImportError,
+            "^mismatched num_entries: 0 should be 65535 in 'testdata/small_deflate_64_junk\.zip'$",
+        ):
+            load_entries("testdata/small_deflate_64_junk.zip")
 
     # method=ZIP_STORED with prefix
 
@@ -137,6 +149,11 @@ class Zipimport64Test(unittest.TestCase):
         self.assertEqual(b"\x00\x00\x00\x00\x00\x00", data[:6])
         self.assertEqual(2_300_000_000, len(data))
 
+    def test_turducken_correct_eocd(self):
+        e, zi = load_zipimporter("testdata/turducken_store.zip")
+        self.assertEqual(2, len(e))
+        self.assertEqual("testdata/turducken_store.zip/outer.py", e[0].filename)
+        self.assertEqual(10, e[0].file_size)
 
-if __name__ == "__main__":
-    unittest.main()
+        data = zi.get_data("testdata/turducken_store.zip/outer.py")
+        self.assertEqual(EXPECTED_OUTER, data)

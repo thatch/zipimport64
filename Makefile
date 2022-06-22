@@ -14,4 +14,4 @@ coverage:
 
 .PHONY: format
 format:
-	ufmt format test_zipimport64.py testdata/create.py
+	ufmt format test_zipimport64.py testdata/create.py testdata/zip64_promotion.py

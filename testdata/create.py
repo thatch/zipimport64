@@ -4,7 +4,13 @@ import os
 import shutil
 import zipfile
 
+from zip64_promotion import (
+    modify_to_include_all_three_zip64_extra_on_last_entry,
+    modify_to_include_zip64_eocd,
+)
+
 SMALL = b"x = 1\n"
+OUTER = b"outer = 1\n"
 ZEROES = b"\x00" * 10_000
 
 
@@ -75,69 +81,46 @@ if __name__ == "__main__":
                 f.write(f2.read())
 
         if base == "deflate":
+            # extra data making the locator useful
+            with open(f"small_{base}_64.zip", "rb") as f:
+                data = f.read()
+
+            assert data[-42:-38] == b"PK\x06\x07"
+            insert_length = 20000  # must be > 16k
+            relative = int.from_bytes(data[-34:-26], "little") + insert_length
+            data = (
+                data[:-42]
+                + b"\x05" * insert_length
+                + data[-42:-34]
+                + relative.to_bytes(8, "little")
+                + data[-26:]
+            )
+
+            with open(f"small_{base}_64_junk.zip", "wb") as f:
+                f.write(data)
+
             with ReproducibleZipFile(f"large_{base}_64.zip", "w", **compression) as zf:
                 # this is larger than 2^31 which causes it to include zip64 extra for the
                 # uncompressed file size; this is not enough to cause a zip64 EOCD however.
                 zf.writestr("large.bin", "\x00" * 2_300_000_000)
 
-            # Manually edit one of the files to contain zip64 extra.  This is validated
-            # by trying to extract it using the unzip utility.
+            modify_to_include_all_three_zip64_extra_on_last_entry(
+                f"small_{base}.zip", f"small_{base}_extra.zip"
+            )
 
-            with open(f"small_{base}.zip", "rb") as f:
-                data = f.read()
-            orig_data_len = len(data)
-            # only update the last file in the central directory
-            file_header_pos = data.rfind(b"PK\x01\x02")
-            assert file_header_pos >= 0
-            # tag and future length for all 3
-            extra = [b"\x01\x00\x18\x00"]
-            replacements = []
-            # file_size, data_size, file_offset
-            for p in (24, 20, 42):
-                extra.append(
-                    int.from_bytes(
-                        data[file_header_pos + p : file_header_pos + p + 4], "little"
-                    ).to_bytes(8, "little")
-                )
-                replacements.append((file_header_pos + p, 4, b"\xff\xff\xff\xff"))
-            extra_bytes = b"".join(extra)
-            # extra length
-            replacements.append(
-                (file_header_pos + 30, 2, len(extra_bytes).to_bytes(2, "little"))
-            )
-            # extra itself, right after name
-            replacements.append(
-                (
-                    file_header_pos
-                    + 46
-                    + int.from_bytes(
-                        data[file_header_pos + 28 : file_header_pos + 30], "little"
-                    ),
-                    0,
-                    extra_bytes,
-                )
-            )
-            eocd_size_pos = len(data) - 22 + 12
+        elif base == "store":
+            with ReproducibleZipFile(f"empty_{base}.zip", "w", **compression) as zf:
+                pass
 
-            to_remove = sum(i[1] for i in replacements)
-            to_add = sum(len(i[2]) for i in replacements)
-            assert to_remove != to_add
-            replacements.append(
-                (
-                    eocd_size_pos,
-                    4,
-                    (
-                        int.from_bytes(
-                            data[eocd_size_pos : eocd_size_pos + 4], "little"
-                        )
-                        + (to_add - to_remove)
-                    ).to_bytes(4, "little"),
-                )
+            modify_to_include_zip64_eocd(
+                f"small_{base}.zip",
+                f"small_{base}_fake64.zip",
             )
-            for a, b, c in sorted(replacements)[::-1]:
-                data = data[:a] + c + data[a + b :]
-            with open(f"small_{base}_extra.zip", "wb") as f:
-                f.write(data)
+
+            with ReproducibleZipFile(f"turducken_{base}.zip", "w") as zf:
+                # This contains a STORED zip64 at the end of a non-zip64
+                zf.writestr("outer.py", OUTER)
+                zf.write(f"small_{base}_fake64.zip", "inner.zip")
 
         # info-zip bug prevents this from working
         # shutil.copy(f"par_{base}_64.zip", f"par_{base}_64_fixup.zip")
